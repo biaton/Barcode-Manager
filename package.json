@@ -1,0 +1,104 @@
+{
+  "name": "barcode-desktop",
+  "version": "1.0.0",
+  "description": "Professional desktop barcode manager with 70+ barcode types, JSON database, and PNG export",
+  "main": "src-electron/main.js",
+  "author": "Barcode Manager Team",
+  "license": "MIT",
+  "homepage": "https://github.com/your-username/barcode-desktop",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:*\"",
+    "dev:renderer": "vite",
+    "dev:main": "wait-on http://localhost:5173 && electron .",
+    "build:renderer": "vite build",
+    "build:main": "electron-builder --dir",
+    "build": "npm run build:renderer",
+    "dist": "electron-builder",
+    "start": "electron .",
+    "rebuild": "npx electron-rebuild",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "bwip-js": "^2.0.11",
+    "concurrently": "^8.2.0",
+    "electron-is-dev": "^2.0.0"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^6.0.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.14",
+    "electron": "^26.0.0",
+    "electron-builder": "^24.0.0",
+    "electron-rebuild": "^3.2.9",
+    "postcss": "^8.4.21",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^3.4.0",
+    "vite": "^5.0.0",
+    "wait-on": "^7.0.1"
+  },
+  "build": {
+    "appId": "com.barcodemanager.desktop",
+    "productName": "Barcode Manager",
+    "copyright": "Copyright © 2025 Barcode Manager Team",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "src-electron/**",
+      "node_modules/**",
+      "package.json",
+      "!node_modules/.cache/**",
+      "!**/.DS_Store",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "signDlls": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "publisherName": "Barcode Manager Team",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Barcode Manager"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Office"
+    }
+  }
+}
