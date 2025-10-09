@@ -1,93 +1,95 @@
 import React, { useEffect, useState, useRef } from 'react'
-import ProductForm from './components/ProductForm'
-import ProductList from './components/ProductList'
-import BarcodeViewer from './components/BarcodeViewer'
+import ProductManager from './components/ProductManager'
+import ClientDatabase from './components/ClientDatabase'
+import LabelDesigner from './components/LabelDesigner'
 import DatabaseManager from './components/DatabaseManager'
 import NetworkInfo from './components/NetworkInfo'
 import DatabaseStatus from './components/DatabaseStatus'
 import { api } from './api'
 
 export default function App() {
-  const [products, setProducts] = useState([])
-  const [selected, setSelected] = useState(null)
+  const [activeTab, setActiveTab] = useState('products') // 'products', 'clients', 'designer'
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
-  useEffect(() => { refresh() }, [])
-
-  async function refresh() {
-    try {
-      const rows = await api.search('')
-      setProducts(rows)
-    } catch (error) {
-      console.error('Error refreshing products:', error)
-      setProducts([])
-    }
-  }
-
-  async function onAdd(payload) {
-    try {
-      console.log('Adding product with payload:', payload)
-      const added = await api.addProduct(payload)
-      console.log('Product added:', added)
-      await refresh()
-      setSelected(added)
-      // Show success feedback
-      if (added) {
-        console.log('✅ Product saved successfully:', added.description)
-      }
-    } catch (error) {
-      console.error('Error adding product:', error)
-      alert('Error adding product: ' + error.message)
-    }
-  }
-
-  async function onSearch(q) {
-    try {
-      if (!q) return refresh()
-      const res = await api.search(q)
-      setProducts(res)
-    } catch (error) {
-      console.error('Error searching products:', error)
-      setProducts([])
-    }
-  }
-
-  async function onSelect(id) {
-    try {
-      const p = await api.getProduct(id)
-      setSelected(p)
-    } catch (error) {
-      console.error('Error getting product:', error)
-    }
+  // Function to trigger refresh in child components
+  const triggerRefresh = () => {
+    setRefreshTrigger(prev => prev + 1)
   }
 
   return (
-    <div className="h-full p-6 bg-slate-50">
-      <div className="max-w-7xl mx-auto bg-white rounded-2xl shadow p-6 grid grid-cols-3 gap-6">
-        <div className="col-span-2">
-          <div className="flex justify-between items-center mb-2">
-            <h1 className="text-2xl font-semibold">Barcode Manager</h1>
+    <div className="h-full min-h-screen p-6 bg-slate-50">
+      <div className="max-w-7xl mx-auto bg-white rounded-2xl shadow overflow-hidden">
+        {/* App Header */}
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-2xl font-bold">Barcode Manager</h1>
+              <p className="text-blue-100 text-sm">Complete product and label management system</p>
+            </div>
             <div className="flex gap-2">
               <NetworkInfo />
-              <DatabaseManager onDatabaseChanged={() => refresh()} />
+              <DatabaseManager onDatabaseChanged={triggerRefresh} />
             </div>
-          </div>
-          <div className="flex justify-between items-center">
-            <p className="text-sm text-slate-500">Create unique barcodes, reuse existing, export PNGs.</p>
-            <DatabaseStatus />
-          </div>
-
-          <div className="mt-4">
-            <ProductForm onAdd={onAdd} />
-          </div>
-
-          <div className="mt-6">
-            <input placeholder="Search description, SKU or barcode" onChange={e => onSearch(e.target.value)} className="w-full border p-2 rounded" />
-            <ProductList products={products} onSelect={onSelect} />
           </div>
         </div>
 
-        <div>
-          <BarcodeViewer product={selected} onUpdated={() => refresh()} />
+        {/* Tab Navigation */}
+        <div className="border-b border-gray-200 bg-gray-50">
+          <nav className="flex">
+            <button
+              onClick={() => setActiveTab('products')}
+              className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'products'
+                  ? 'border-blue-500 text-blue-600 bg-white'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-white/50'
+              }`}
+            >
+              📦 Product Manager
+            </button>
+            <button
+              onClick={() => setActiveTab('clients')}
+              className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'clients'
+                  ? 'border-blue-500 text-blue-600 bg-white'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-white/50'
+              }`}
+            >
+              👥 Client Database
+            </button>
+            <button
+              onClick={() => setActiveTab('designer')}
+              className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'designer'
+                  ? 'border-blue-500 text-blue-600 bg-white'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 hover:bg-white/50'
+              }`}
+            >
+              🏷️ Label Designer
+            </button>
+          </nav>
+        </div>
+
+        {/* Tab Content */}
+        <div className="p-6 bg-gray-50 min-h-screen">
+          {activeTab === 'products' && (
+            <ProductManager key={refreshTrigger} />
+          )}
+          
+          {activeTab === 'clients' && (
+            <ClientDatabase key={refreshTrigger} />
+          )}
+          
+          {activeTab === 'designer' && (
+            <LabelDesigner key={refreshTrigger} />
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="bg-gray-100 border-t p-4 text-center">
+          <div className="flex justify-between items-center text-sm text-gray-600">
+            <DatabaseStatus />
+            <span>Barcode Manager Pro - Complete Product & Label Management</span>
+          </div>
         </div>
       </div>
     </div>

@@ -17,10 +17,18 @@ export default function BarcodeViewer({ product, onUpdated }) {
     try {
       const barcodeType = product.barcode_type || 'code128'
       
-      // Ensure barcode text is a string and handle edge cases
-      let barcodeText = String(product.barcode || '').trim()
+      // Use custom_barcode if available, otherwise fall back to SKU/barcode
+      let barcodeText = ''
+      if (product.custom_barcode && product.custom_barcode.trim() !== '') {
+        barcodeText = String(product.custom_barcode).trim()
+      } else if (product.sku && product.sku.trim() !== '') {
+        barcodeText = String(product.sku).trim()
+      } else {
+        barcodeText = String(product.barcode || '').trim()
+      }
+      
       if (!barcodeText) {
-        setMessage('Barcode text is empty')
+        setMessage('No barcode data available')
         return
       }
       
@@ -253,6 +261,23 @@ export default function BarcodeViewer({ product, onUpdated }) {
     }
   }
 
+  async function generateBarcode() {
+    if (!product) return alert('Select product')
+    
+    try {
+      setMessage('Generating barcode...')
+      const updatedProduct = await api.generateBarcode(product.id)
+      setMessage('Barcode generated successfully!')
+      onUpdated && onUpdated()
+      
+      // Clear message after delay
+      setTimeout(() => setMessage(''), 2000)
+    } catch (error) {
+      console.error('Error generating barcode:', error)
+      setMessage('Error generating barcode: ' + error.message)
+    }
+  }
+
   async function exportPNG() {
     if (!product) return alert('Select product')
     const canvas = canvasRef.current
@@ -260,7 +285,8 @@ export default function BarcodeViewer({ product, onUpdated }) {
 
     try {
       // Let main process suggest a save path or save in app userData images folder
-      const suggested = `${product.barcode}.png`
+      const displayBarcode = product.custom_barcode || product.sku || product.barcode
+      const suggested = `${displayBarcode}.png`
       const picked = await api.showSaveDialog({ defaultName: suggested })
       if (!picked) return
       
@@ -286,8 +312,11 @@ export default function BarcodeViewer({ product, onUpdated }) {
             <div className="text-sm mb-2"><strong>ID:</strong> {product.id}</div>
             <div className="text-sm mb-2"><strong>Description:</strong> {product.description}</div>
             <div className="text-sm mb-2"><strong>SKU:</strong> {product.sku || 'N/A'}</div>
+            <div className="text-sm mb-2">
+              <strong>Generated Barcode:</strong> {product.custom_barcode || 'Not generated'}
+            </div>
             <div className="text-sm mb-4">
-              <strong>Barcode:</strong> {product.barcode} 
+              <strong>Display Barcode:</strong> {product.custom_barcode || product.sku || product.barcode} 
               <span className="ml-2 px-2 py-1 bg-gray-100 rounded text-xs">
                 {product.barcode_type?.toUpperCase() || 'CODE128'}
               </span>
@@ -309,7 +338,14 @@ export default function BarcodeViewer({ product, onUpdated }) {
               </div>
             )}
             
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              <button 
+                onClick={generateBarcode}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
+                disabled={!product}
+              >
+                Generate Barcode
+              </button>
               <button 
                 onClick={exportPNG} 
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"

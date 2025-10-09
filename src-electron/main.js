@@ -4,13 +4,28 @@ const isDev = require('electron-is-dev')
 const fs = require('fs')
 
 let dbPath = path.join(app.getPath('userData'), 'barcodes.json')
-let db = { products: [], lastId: 0 }
+let db = { products: [], lastId: 0, clients: [], clientProducts: [], labelTemplates: [] }
 
 function initDB() {
   try {
     if (fs.existsSync(dbPath)) {
       const data = JSON.parse(fs.readFileSync(dbPath, 'utf8'))
       db = data
+      
+      // Initialize new data structures if they don't exist
+      if (!db.clients) db.clients = []
+      if (!db.clientProducts) db.clientProducts = []
+      if (!db.labelTemplates) db.labelTemplates = []
+      
+      // Set up global variables from database
+      clients = db.clients || []
+      clientProducts = db.clientProducts || []
+      labelTemplates = db.labelTemplates || []
+      
+      // Update next IDs based on existing data
+      nextClientId = Math.max(...clients.map(c => c.id), 0) + 1
+      nextClientProductId = Math.max(...clientProducts.map(cp => cp.id), 0) + 1
+      nextTemplateId = Math.max(...labelTemplates.map(t => t.id), 0) + 1
     } else {
       saveDB()
     }
@@ -24,6 +39,11 @@ function initDB() {
 
 function saveDB() {
   try {
+    // Update database object with current state
+    db.clients = clients
+    db.clientProducts = clientProducts
+    db.labelTemplates = labelTemplates
+    
     fs.writeFileSync(dbPath, JSON.stringify(db, null, 2))
   } catch (err) {
     console.error('Database save error:', err)
@@ -97,13 +117,327 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 
 // ----------------------
-// IPC handlers exposed by preload
+// IPC handlers exposed by preload  
 // ----------------------
 
-ipcMain.handle('db-add-product', async (event, { description, sku, barcodeType, customBarcode }) => {
+// Initialize data structures for new features
+let clients = []
+let clientProducts = []
+let labelTemplates = []
+let nextClientId = 1
+let nextClientProductId = 1
+let nextTemplateId = 1
+
+// ============ PRODUCT MANAGEMENT ============
+ipcMain.handle('db-get-all-products', async (event) => {
   try {
-    // Validate barcode type and data
-    const type = barcodeType || 'code128'
+    return db.products.sort((a, b) => b.id - a.id)
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-search-products', async (event, query) => {
+  try {
+    if (!query) return db.products.sort((a, b) => b.id - a.id)
+    
+    const term = query.toLowerCase()
+    return db.products.filter(p => 
+      p.description.toLowerCase().includes(term) ||
+      (p.sku && p.sku.toLowerCase().includes(term)) ||
+      (p.barcode && p.barcode.toLowerCase().includes(term)) ||
+      (p.name && p.name.toLowerCase().includes(term)) ||
+      (p.category && p.category.toLowerCase().includes(term))
+    ).sort((a, b) => b.id - a.id)
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-update-product', async (event, id, payload) => {
+  try {
+    const productIndex = db.products.findIndex(p => p.id === id)
+    if (productIndex === -1) {
+      throw new Error('Product not found')
+    }
+    
+    db.products[productIndex] = {
+      ...db.products[productIndex],
+      ...payload,
+      id: id, // Preserve ID
+      updated_at: new Date().toISOString()
+    }
+    
+    saveDB()
+    return db.products[productIndex]
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-delete-product', async (event, id) => {
+  try {
+    const productIndex = db.products.findIndex(p => p.id === id)
+    if (productIndex === -1) {
+      throw new Error('Product not found')
+    }
+    
+    const deletedProduct = db.products.splice(productIndex, 1)[0]
+    
+    // Also remove from client-product relationships
+    clientProducts = clientProducts.filter(cp => cp.product_id !== id)
+    
+    saveDB()
+    return deletedProduct
+  } catch (err) {
+    throw err
+  }
+})
+
+// ============ CLIENT MANAGEMENT ============
+ipcMain.handle('db-get-all-clients', async (event) => {
+  try {
+    return clients.sort((a, b) => b.id - a.id)
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-add-client', async (event, payload) => {
+  try {
+    // Check for existing by company name or email
+    const existing = clients.find(c => 
+      c.company_name.toLowerCase() === payload.companyName.toLowerCase() ||
+      c.email.toLowerCase() === payload.email.toLowerCase()
+    )
+    
+    if (existing) {
+      throw new Error(`Client with company name "${payload.companyName}" or email "${payload.email}" already exists`)
+    }
+    
+    const newClient = {
+      id: nextClientId++,
+      company_name: payload.companyName,
+      contact_name: payload.contactName || '',
+      email: payload.email,
+      phone: payload.phone || '',
+      address: payload.address || '',
+      notes: payload.notes || '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+    
+    clients.push(newClient)
+    saveDB()
+    return newClient
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-get-client', async (event, id) => {
+  try {
+    return clients.find(c => c.id === id) || null
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-update-client', async (event, id, payload) => {
+  try {
+    const clientIndex = clients.findIndex(c => c.id === id)
+    if (clientIndex === -1) {
+      throw new Error('Client not found')
+    }
+    
+    clients[clientIndex] = {
+      ...clients[clientIndex],
+      ...payload,
+      id: id,
+      updated_at: new Date().toISOString()
+    }
+    
+    saveDB()
+    return clients[clientIndex]
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-delete-client', async (event, id) => {
+  try {
+    const clientIndex = clients.findIndex(c => c.id === id)
+    if (clientIndex === -1) {
+      throw new Error('Client not found')
+    }
+    
+    const deletedClient = clients.splice(clientIndex, 1)[0]
+    
+    // Also remove client-product relationships
+    clientProducts = clientProducts.filter(cp => cp.client_id !== id)
+    
+    saveDB()
+    return deletedClient
+  } catch (err) {
+    throw err
+  }
+})
+
+// ============ CLIENT-PRODUCT RELATIONSHIPS ============
+ipcMain.handle('db-get-client-products', async (event, clientId) => {
+  try {
+    const clientProductList = clientProducts.filter(cp => cp.client_id === clientId)
+    
+    // Join with product and template data
+    return clientProductList.map(cp => {
+      const product = db.products.find(p => p.id === cp.product_id)
+      const template = cp.template_id ? labelTemplates.find(t => t.id === cp.template_id) : null
+      return {
+        ...cp,
+        product: product,
+        template: template
+      }
+    })
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-add-client-product', async (event, { clientId, productId, orderFrequency, notes, templateId }) => {
+  try {
+    // Check if relationship already exists
+    const existing = clientProducts.find(cp => 
+      cp.client_id === clientId && cp.product_id === productId
+    )
+    
+    if (existing) {
+      throw new Error('This product is already assigned to this client')
+    }
+    
+    const newClientProduct = {
+      id: nextClientProductId++,
+      client_id: clientId,
+      product_id: productId,
+      order_frequency: orderFrequency || 'As needed',
+      last_ordered: null,
+      notes: notes || '',
+      template_id: templateId || null,
+      template_config: null
+    }
+    
+    clientProducts.push(newClientProduct)
+    saveDB()
+    return newClientProduct
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-remove-client-product', async (event, { clientId, productId }) => {
+  try {
+    const index = clientProducts.findIndex(cp => 
+      cp.client_id === clientId && cp.product_id === productId
+    )
+    
+    if (index === -1) {
+      throw new Error('Client-product relationship not found')
+    }
+    
+    const removed = clientProducts.splice(index, 1)[0]
+    saveDB()
+    return removed
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-update-client-product-template', async (event, { clientId, productId, templateId, templateConfig }) => {
+  try {
+    const clientProduct = clientProducts.find(cp => 
+      cp.client_id === clientId && cp.product_id === productId
+    )
+    
+    if (!clientProduct) {
+      throw new Error('Client-product relationship not found')
+    }
+    
+    clientProduct.template_id = templateId
+    clientProduct.template_config = templateConfig || null
+    
+    saveDB()
+    return clientProduct
+  } catch (err) {
+    throw err
+  }
+})
+
+// ============ TEMPLATE MANAGEMENT ============
+ipcMain.handle('db-get-all-templates', async (event) => {
+  try {
+    return labelTemplates.sort((a, b) => b.id - a.id)
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-save-template', async (event, payload) => {
+  try {
+    const newTemplate = {
+      id: nextTemplateId++,
+      name: payload.name,
+      description: payload.description || '',
+      template_data: payload.templateData,
+      created_at: new Date().toISOString()
+    }
+    
+    labelTemplates.push(newTemplate)
+    saveDB()
+    return newTemplate
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-get-template', async (event, id) => {
+  try {
+    return labelTemplates.find(t => t.id === id) || null
+  } catch (err) {
+    throw err
+  }
+})
+
+ipcMain.handle('db-delete-template', async (event, id) => {
+  try {
+    const templateIndex = labelTemplates.findIndex(t => t.id === id)
+    if (templateIndex === -1) {
+      throw new Error('Template not found')
+    }
+    
+    const deleted = labelTemplates.splice(templateIndex, 1)[0]
+    
+    // Remove template assignments from client products
+    clientProducts.forEach(cp => {
+      if (cp.template_id === id) {
+        cp.template_id = null
+        cp.template_config = null
+      }
+    })
+    
+    saveDB()
+    return deleted
+  } catch (err) {
+    throw err
+  }
+})
+
+// ============ LEGACY PRODUCT HANDLERS (Updated) ============
+ipcMain.handle('db-add-product', async (event, payload) => {
+  try {
+    // Handle both old and new payload formats
+    const description = payload.description || payload.name
+    const sku = payload.sku || `SKU${Date.now()}`
+    const barcodeType = payload.barcodeType || 'code128'
+    const customBarcode = payload.customBarcode
     
     // Check for existing by SKU or exact description
     if (sku) {
@@ -111,7 +445,7 @@ ipcMain.handle('db-add-product', async (event, { description, sku, barcodeType, 
       if (existingBySku) return existingBySku
     }
     
-    const existingByDesc = db.products.find(p => p.description === description)
+    const existingByDesc = db.products.find(p => p.description === description || p.name === description)
     if (existingByDesc) return existingByDesc
     
     // Insert new product
@@ -122,7 +456,7 @@ ipcMain.handle('db-add-product', async (event, { description, sku, barcodeType, 
     
     // Validate and normalize barcode data
     try {
-      barcodeVal = validateBarcodeData(type, barcodeVal)
+      barcodeVal = validateBarcodeData(barcodeType, barcodeVal)
     } catch (validationError) {
       console.warn('Barcode validation warning:', validationError.message)
       // Use the original value if validation fails
@@ -130,12 +464,21 @@ ipcMain.handle('db-add-product', async (event, { description, sku, barcodeType, 
     
     const product = {
       id,
+      name: description, // Support both name and description
       description,
       sku: sku || null,
+      category: payload.category || '',
+      price: parseFloat(payload.price) || 0,
+      weight: payload.weight || '',
+      dimensions: payload.dimensions || '',
+      manufacturer: payload.manufacturer || '',
       barcode: barcodeVal,
-      barcode_type: type,
-      image_path: null,
-      created_at: new Date().toISOString()
+      barcode_type: barcodeType,
+      photo_path: payload.photoPath || null,
+      image_path: payload.photoPath || null,
+      notes: payload.notes || '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     }
     
     db.products.push(product)
@@ -183,6 +526,27 @@ ipcMain.handle('dialog-show-save', async (event, { defaultName }) => {
   return res.filePath
 })
 
+ipcMain.handle('saveImageToDisk', async (event, { base64, suggestedName }) => {
+  try {
+    const win = BrowserWindow.getFocusedWindow()
+    const res = await dialog.showSaveDialog(win, { 
+      defaultPath: suggestedName, 
+      filters: [{ name: 'PNG Images', extensions: ['png'] }] 
+    })
+    
+    if (res.canceled || !res.filePath) {
+      return { success: false, message: 'Save cancelled by user' }
+    }
+
+    const buffer = Buffer.from(base64.split(',')[1], 'base64')
+    fs.writeFileSync(res.filePath, buffer)
+    return { success: true, filePath: res.filePath }
+  } catch (error) {
+    console.error('Save image error:', error)
+    return { success: false, message: error.message }
+  }
+})
+
 ipcMain.handle('db-update-image-path', async (event, { id, imagePath }) => {
   try {
     const product = db.products.find(p => p.id === id)
@@ -201,9 +565,21 @@ ipcMain.handle('db-reset', async (event) => {
   try {
     db.products = []
     db.lastId = 0
+    db.clients = []
+    db.clientProducts = []
+    db.labelTemplates = []
+    
+    // Reset global variables
+    clients = []
+    clientProducts = []
+    labelTemplates = []
+    nextClientId = 1
+    nextClientProductId = 1
+    nextTemplateId = 1
+    
     saveDB()
     
-    console.log('Database reset: All products deleted')
+    console.log('Database reset: All data deleted')
     return { success: true, message: 'Database reset successfully' }
   } catch (err) {
     throw err
@@ -214,8 +590,11 @@ ipcMain.handle('db-backup', async (event) => {
   try {
     const backup = {
       timestamp: new Date().toISOString(),
-      version: '1.0',
-      products: db.products
+      version: '2.0',
+      products: db.products,
+      clients: clients,
+      clientProducts: clientProducts,
+      labelTemplates: labelTemplates
     }
     
     return backup
@@ -226,19 +605,50 @@ ipcMain.handle('db-backup', async (event) => {
 
 ipcMain.handle('db-restore', async (event, backupData) => {
   try {
-    if (!backupData || !backupData.products || !Array.isArray(backupData.products)) {
-      throw new Error('Invalid backup data format')
+    if (!backupData) {
+      throw new Error('Invalid backup data')
     }
     
-    // Clear existing data and restore
-    db.products = backupData.products
-    db.lastId = backupData.products.length > 0 ? Math.max(...backupData.products.map(p => p.id)) : 0
+    // Clear existing data
+    db.products = []
+    db.lastId = 0
+    clients = []
+    clientProducts = []
+    labelTemplates = []
+    
+    // Restore data (handle both v1 and v2 backups)
+    if (backupData.products && Array.isArray(backupData.products)) {
+      db.products = backupData.products
+      db.lastId = backupData.products.length > 0 ? Math.max(...backupData.products.map(p => p.id)) : 0
+    }
+    
+    if (backupData.clients && Array.isArray(backupData.clients)) {
+      clients = backupData.clients
+    }
+    
+    if (backupData.clientProducts && Array.isArray(backupData.clientProducts)) {
+      clientProducts = backupData.clientProducts
+    }
+    
+    if (backupData.labelTemplates && Array.isArray(backupData.labelTemplates)) {
+      labelTemplates = backupData.labelTemplates
+    }
+    
+    // Update next IDs
+    nextClientId = clients.length > 0 ? Math.max(...clients.map(c => c.id)) + 1 : 1
+    nextClientProductId = clientProducts.length > 0 ? Math.max(...clientProducts.map(cp => cp.id)) + 1 : 1
+    nextTemplateId = labelTemplates.length > 0 ? Math.max(...labelTemplates.map(t => t.id)) + 1 : 1
+    
     saveDB()
     
     return { 
       success: true, 
-      message: `Database restored: ${backupData.products.length} products`, 
-      count: backupData.products.length 
+      message: `Database restored: ${db.products.length} products, ${clients.length} clients, ${labelTemplates.length} templates`,
+      counts: {
+        products: db.products.length,
+        clients: clients.length,
+        templates: labelTemplates.length
+      }
     }
   } catch (err) {
     throw err

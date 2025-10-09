@@ -1,68 +1,329 @@
-// Mock API for browser testing when window.api is not available
+// New comprehensive data model
 const mockProducts = [
   {
     id: 1,
-    description: 'Sample Product 1',
+    name: 'Sample Product 1',
     sku: 'SKU001',
-    barcode: 'PRD00000001',
+    description: 'This is a sample product for testing',
+    category: 'Electronics',
+    price: 29.99,
+    weight: '2.5 kg',
+    dimensions: '10x5x3 cm',
+    manufacturer: 'Sample Corp',
+    barcode: 'BRC157458901',
     barcode_type: 'code128',
-    created_at: new Date().toISOString()
+    photo_path: null,
+    notes: 'Sample notes about the product',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
   },
   {
     id: 2,
-    description: 'Sample Product 2',
-    sku: 'SKU002',
-    barcode: 'PRD00000002',
+    name: 'Sample Product 2',
+    sku: 'SKU002', 
+    description: 'Another sample product',
+    category: 'Home & Garden',
+    price: 15.50,
+    weight: '1.0 kg',
+    dimensions: '15x10x2 cm',
+    manufacturer: 'Home Inc',
+    barcode: 'BRC157458902',
     barcode_type: 'ean13',
+    photo_path: null,
+    notes: 'Additional product information',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+]
+
+const mockClients = [
+  {
+    id: 1,
+    company_name: 'ABC Corporation',
+    contact_name: 'John Smith',
+    email: 'john@abc-corp.com',
+    phone: '+1-555-0123',
+    address: '123 Business St, City, State 12345',
+    notes: 'Regular client, orders monthly',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+]
+
+const mockClientProducts = [
+  {
+    id: 1,
+    client_id: 1,
+    product_id: 1,
+    order_frequency: 'Monthly',
+    last_ordered: new Date().toISOString(),
+    notes: 'Client always orders this product',
+    template_id: null, // Associated label template
+    template_config: null // Custom template configuration for this client-product combination
+  }
+]
+
+const mockLabelTemplates = [
+  {
+    id: 1,
+    name: 'Standard Product Label',
+    description: 'Default template for product labels',
+    template_data: {
+      width: 400,
+      height: 300,
+      companyName: 'AIM Inc.',
+      includeQR: true,
+      includePhoto: false,
+      customFields: [
+        { label: 'SKU:', show: true },
+        { label: 'Price:', show: true },
+        { label: 'Weight:', show: false }
+      ]
+    },
     created_at: new Date().toISOString()
   }
 ]
 
-let nextId = 3
+let nextProductId = 3
+let nextClientId = 2
+let nextClientProductId = 2
+let nextTemplateId = 2
 
 const mockAPI = {
-  async addProduct(payload) {
+  // ============ PRODUCT MANAGEMENT ============
+    async addProduct(payload) {
     console.log('Mock API: Adding product:', payload)
     
-    // Check for existing by SKU or description
-    const existing = mockProducts.find(p => 
-      (payload.sku && p.sku === payload.sku) || 
-      p.description === payload.description
-    )
+    // Handle both old and new payload formats for compatibility
+    const name = payload.name || payload.description
+    const sku = payload.sku || `SKU${Date.now()}`
     
+    // Check for existing by SKU
+    const existing = mockProducts.find(p => p.sku === sku)
     if (existing) {
       console.log('Mock API: Found existing product:', existing)
-      return existing
+      return existing // Return existing instead of throwing error for compatibility
     }
     
+    // Use provided barcode or generate default
+    const barcode = payload.customBarcode || `BRC${Date.now()}${String(nextProductId).padStart(3, '0')}`
+    
     const newProduct = {
-      id: nextId++,
-      description: payload.description,
-      sku: payload.sku,
-      barcode: payload.customBarcode || `PRD${String(nextId-1).padStart(8, '0')}`,
+      id: nextProductId++,
+      name: name,
+      sku: sku,
+      description: payload.description || name || '',
+      category: payload.category || '',
+      price: parseFloat(payload.price) || 0,
+      weight: payload.weight || '',
+      dimensions: payload.dimensions || '',
+      manufacturer: payload.manufacturer || '',
+      barcode: barcode,
       barcode_type: payload.barcodeType || 'code128',
-      created_at: new Date().toISOString()
+      photo_path: payload.photoPath || null,
+      image_path: payload.photoPath || null, // Legacy support
+      notes: payload.notes || '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     }
     
     console.log('Mock API: Creating new product:', newProduct)
     mockProducts.push(newProduct)
-    console.log('Mock API: Total products now:', mockProducts.length)
     return newProduct
+  },  async updateProduct(id, payload) {
+    const productIndex = mockProducts.findIndex(p => p.id === id)
+    if (productIndex === -1) {
+      throw new Error('Product not found')
+    }
+    
+    mockProducts[productIndex] = {
+      ...mockProducts[productIndex],
+      ...payload,
+      id: id, // Preserve ID
+      updated_at: new Date().toISOString()
+    }
+    
+    return mockProducts[productIndex]
   },
 
-  async search(query) {
+  async deleteProduct(id) {
+    const productIndex = mockProducts.findIndex(p => p.id === id)
+    if (productIndex === -1) {
+      throw new Error('Product not found')
+    }
+    
+    const deletedProduct = mockProducts.splice(productIndex, 1)[0]
+    
+    // Also remove from client-product relationships
+    const clientProductsToRemove = mockClientProducts.filter(cp => cp.product_id === id)
+    clientProductsToRemove.forEach(cp => {
+      const index = mockClientProducts.findIndex(item => item.id === cp.id)
+      if (index > -1) mockClientProducts.splice(index, 1)
+    })
+    
+    return deletedProduct
+  },
+
+  async searchProducts(query) {
     if (!query) return mockProducts
     
     const term = query.toLowerCase()
     return mockProducts.filter(p => 
+      p.name.toLowerCase().includes(term) ||
       p.description.toLowerCase().includes(term) ||
       (p.sku && p.sku.toLowerCase().includes(term)) ||
-      p.barcode.toLowerCase().includes(term)
+      p.barcode.toLowerCase().includes(term) ||
+      (p.category && p.category.toLowerCase().includes(term))
     )
+  },
+
+  async getAllProducts() {
+    return [...mockProducts]
   },
 
   async getProduct(id) {
     return mockProducts.find(p => p.id === id)
+  },
+
+  // ============ CLIENT MANAGEMENT ============
+  async addClient(payload) {
+    console.log('Mock API: Adding client:', payload)
+    
+    // Check for existing by company name or email
+    const existing = mockClients.find(c => 
+      c.company_name.toLowerCase() === payload.companyName.toLowerCase() ||
+      c.email.toLowerCase() === payload.email.toLowerCase()
+    )
+    
+    if (existing) {
+      throw new Error(`Client with company name "${payload.companyName}" or email "${payload.email}" already exists`)
+    }
+    
+    const newClient = {
+      id: nextClientId++,
+      company_name: payload.companyName,
+      contact_name: payload.contactName || '',
+      email: payload.email,
+      phone: payload.phone || '',
+      address: payload.address || '',
+      notes: payload.notes || '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+    
+    console.log('Mock API: Creating new client:', newClient)
+    mockClients.push(newClient)
+    return newClient
+  },
+
+  async getAllClients() {
+    return [...mockClients]
+  },
+
+  async getClient(id) {
+    return mockClients.find(c => c.id === id)
+  },
+
+  async updateClient(id, payload) {
+    const clientIndex = mockClients.findIndex(c => c.id === id)
+    if (clientIndex === -1) {
+      throw new Error('Client not found')
+    }
+    
+    mockClients[clientIndex] = {
+      ...mockClients[clientIndex],
+      ...payload,
+      id: id,
+      updated_at: new Date().toISOString()
+    }
+    
+    return mockClients[clientIndex]
+  },
+
+  async deleteClient(id) {
+    const clientIndex = mockClients.findIndex(c => c.id === id)
+    if (clientIndex === -1) {
+      throw new Error('Client not found')
+    }
+    
+    const deletedClient = mockClients.splice(clientIndex, 1)[0]
+    
+    // Also remove client-product relationships
+    const clientProductsToRemove = mockClientProducts.filter(cp => cp.client_id === id)
+    clientProductsToRemove.forEach(cp => {
+      const index = mockClientProducts.findIndex(item => item.id === cp.id)
+      if (index > -1) mockClientProducts.splice(index, 1)
+    })
+    
+    return deletedClient
+  },
+
+  // ============ CLIENT-PRODUCT RELATIONSHIPS ============
+  async addClientProduct(clientId, productId, orderFrequency, notes, templateId = null) {
+    // Check if relationship already exists
+    const existing = mockClientProducts.find(cp => 
+      cp.client_id === clientId && cp.product_id === productId
+    )
+    
+    if (existing) {
+      throw new Error('This product is already assigned to this client')
+    }
+    
+    const newClientProduct = {
+      id: nextClientProductId++,
+      client_id: clientId,
+      product_id: productId,
+      order_frequency: orderFrequency || 'As needed',
+      last_ordered: null,
+      notes: notes || '',
+      template_id: templateId,
+      template_config: null
+    }
+    
+    mockClientProducts.push(newClientProduct)
+    return newClientProduct
+  },
+
+  async updateClientProductTemplate(clientId, productId, templateId, templateConfig = null) {
+    const clientProduct = mockClientProducts.find(cp => 
+      cp.client_id === clientId && cp.product_id === productId
+    )
+    
+    if (!clientProduct) {
+      throw new Error('Client-product relationship not found')
+    }
+    
+    clientProduct.template_id = templateId
+    clientProduct.template_config = templateConfig
+    
+    return clientProduct
+  },
+
+  async getClientProducts(clientId) {
+    const clientProducts = mockClientProducts.filter(cp => cp.client_id === clientId)
+    
+    // Join with product and template data
+    return clientProducts.map(cp => {
+      const product = mockProducts.find(p => p.id === cp.product_id)
+      const template = cp.template_id ? mockLabelTemplates.find(t => t.id === cp.template_id) : null
+      return {
+        ...cp,
+        product: product,
+        template: template
+      }
+    })
+  },
+
+  async removeClientProduct(clientId, productId) {
+    const index = mockClientProducts.findIndex(cp => 
+      cp.client_id === clientId && cp.product_id === productId
+    )
+    
+    if (index === -1) {
+      throw new Error('Client-product relationship not found')
+    }
+    
+    return mockClientProducts.splice(index, 1)[0]
   },
 
   async saveImageToDisk({ base64, suggestedName }) {
@@ -113,42 +374,137 @@ const mockAPI = {
     ]
   },
 
+  // ============ BACKWARD COMPATIBILITY ============
+  async search(query) {
+    // For backward compatibility with existing code
+    return this.searchProducts(query)
+  },
+  
+  async getProduct(id) {
+    return mockProducts.find(p => p.id === id)
+  },
+
+  async addProduct_Legacy(payload) {
+    // Legacy method for old product form
+    return this.addProduct({
+      name: payload.description,
+      sku: payload.sku,
+      description: payload.description,
+      barcodeType: payload.barcodeType,
+      customBarcode: payload.customBarcode
+    })
+  },
+
+  // ============ DATABASE MANAGEMENT ============
   async resetDatabase() {
     console.log('Mock API: Resetting database')
-    mockProducts.length = 0 // Clear array
-    nextId = 1
+    mockProducts.length = 0
+    mockClients.length = 0
+    mockClientProducts.length = 0
+    mockLabelTemplates.length = 0
+    nextProductId = 1
+    nextClientId = 1
+    nextClientProductId = 1
+    nextTemplateId = 1
     return { success: true, message: 'Database reset successfully' }
   },
 
   async backupDatabase() {
     return {
       timestamp: new Date().toISOString(),
-      version: '1.0',
-      products: [...mockProducts] // Copy array
+      version: '2.0',
+      products: [...mockProducts],
+      clients: [...mockClients],
+      clientProducts: [...mockClientProducts],
+      labelTemplates: [...mockLabelTemplates]
     }
   },
 
   async restoreDatabase(backupData) {
-    if (!backupData || !backupData.products) {
+    if (!backupData) {
       throw new Error('Invalid backup data')
     }
     
-    mockProducts.length = 0 // Clear current data
-    mockProducts.push(...backupData.products) // Restore data
-    nextId = Math.max(...mockProducts.map(p => p.id), 0) + 1
+    // Clear current data
+    mockProducts.length = 0
+    mockClients.length = 0
+    mockClientProducts.length = 0
+    mockLabelTemplates.length = 0
+    
+    // Restore data (handle both v1 and v2 backups)
+    if (backupData.products) mockProducts.push(...backupData.products)
+    if (backupData.clients) mockClients.push(...backupData.clients)
+    if (backupData.clientProducts) mockClientProducts.push(...backupData.clientProducts)
+    if (backupData.labelTemplates) mockLabelTemplates.push(...backupData.labelTemplates)
+    
+    // Update next IDs
+    nextProductId = Math.max(...mockProducts.map(p => p.id), 0) + 1
+    nextClientId = Math.max(...mockClients.map(c => c.id), 0) + 1
+    nextClientProductId = Math.max(...mockClientProducts.map(cp => cp.id), 0) + 1
+    nextTemplateId = Math.max(...mockLabelTemplates.map(t => t.id), 0) + 1
     
     return { 
       success: true, 
-      message: `Database restored: ${backupData.products.length} products`,
-      count: backupData.products.length 
+      message: `Database restored: ${mockProducts.length} products, ${mockClients.length} clients, ${mockLabelTemplates.length} templates`,
+      counts: {
+        products: mockProducts.length,
+        clients: mockClients.length,
+        templates: mockLabelTemplates.length
+      }
     }
   },
 
+  // ============ LABEL TEMPLATE MANAGEMENT ============
+  async saveTemplate(payload) {
+    console.log('Mock API: Saving template:', payload)
+    
+    const newTemplate = {
+      id: nextTemplateId++,
+      name: payload.name,
+      description: payload.description || '',
+      template_data: payload.templateData,
+      created_at: new Date().toISOString()
+    }
+    
+    mockLabelTemplates.push(newTemplate)
+    return newTemplate
+  },
+
+  async getAllTemplates() {
+    return [...mockLabelTemplates]
+  },
+
+  async getTemplate(id) {
+    return mockLabelTemplates.find(t => t.id === id)
+  },
+
+  async deleteTemplate(id) {
+    const templateIndex = mockLabelTemplates.findIndex(t => t.id === id)
+    if (templateIndex === -1) {
+      throw new Error('Template not found')
+    }
+    
+    return mockLabelTemplates.splice(templateIndex, 1)[0]
+  },
+
   async getDatabaseInfo() {
+    const totalData = {
+      products: mockProducts,
+      clients: mockClients,
+      clientProducts: mockClientProducts,
+      templates: mockLabelTemplates
+    }
+    
     return {
       path: 'Browser Mock Database (in memory)',
       exists: true,
-      size: JSON.stringify(mockProducts).length,
+      size: JSON.stringify(totalData).length,
+      counts: {
+        products: mockProducts.length,
+        clients: mockClients.length,
+        clientProducts: mockClientProducts.length,
+        templates: mockLabelTemplates.length
+      },
       isMock: true
     }
   }
