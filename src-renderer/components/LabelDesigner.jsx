@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import bwipjs from 'bwip-js'
-import { labelTemplates, paperSizes, industryBarcodes } from './LabelTemplates'
+import { labelTemplates, paperSizes, industryBarcodes, printerConfigs, paperTypes, exportFormats } from './LabelTemplates'
 import { api } from '../api'
 
 const LabelDesigner = () => {
@@ -42,12 +42,16 @@ const LabelDesigner = () => {
     barcodeSettings: {
       width: 200,
       height: 50,
-      showText: true
+      showText: true,
+      x: 0, // X offset from center
+      y: 0  // Y offset from auto-calculated position
     },
     qrCodeSettings: {
       width: 100,
       height: 100,
-      position: 'right'
+      position: 'right',
+      x: 0, // X offset from calculated position
+      y: 0  // Y offset from calculated position
     },
     photoSettings: {
       width: 80,
@@ -58,12 +62,18 @@ const LabelDesigner = () => {
 
   const [selectedTemplate, setSelectedTemplate] = useState('standard')
   const [selectedPaperSize, setSelectedPaperSize] = useState('4x3')
+  const [selectedPrinter, setSelectedPrinter] = useState('BLP-410')
+  const [selectedPaperType, setSelectedPaperType] = useState('gap')
+  const [selectedExportFormat, setSelectedExportFormat] = useState('BMP')
+  const [labelRotation, setLabelRotation] = useState(0)
+  const [exportDPI, setExportDPI] = useState(203)
   const [products, setProducts] = useState([])
   const [selectedProduct, setSelectedProduct] = useState('')
   const [templates, setTemplates] = useState([])
   const [showTemplateSave, setShowTemplateSave] = useState(false)
   const [templateName, setTemplateName] = useState('')
   const [templateDescription, setTemplateDescription] = useState('')
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
 
   // Helper functions
   const updateFontSetting = (fontType, property, value) => {
@@ -269,16 +279,22 @@ const LabelDesigner = () => {
         const qrCanvas = await generateBarcode(labelConfig.qrCode, 'qrcode', labelConfig.qrCodeSettings)
         if (qrCanvas) {
           const qrSettings = labelConfig.qrCodeSettings
-          let qrX = styleSettings.padding
+          
+          // Calculate QR code position based on position setting and custom offsets
+          let baseQrX = styleSettings.padding
           
           if (qrSettings.position === 'right') {
-            qrX = width - qrSettings.width - styleSettings.padding
+            baseQrX = width - qrSettings.width - styleSettings.padding
           } else if (qrSettings.position === 'center') {
-            qrX = (width - qrSettings.width) / 2
+            baseQrX = (width - qrSettings.width) / 2
           }
           
-          ctx.drawImage(qrCanvas, qrX, currentY, qrSettings.width, qrSettings.height)
-          currentY += qrSettings.height + 15
+          // Apply custom offsets for precise positioning
+          const qrX = baseQrX + (qrSettings.x || 0)
+          const qrY = styleSettings.padding + (qrSettings.y || 0)
+          
+          ctx.drawImage(qrCanvas, qrX, qrY, qrSettings.width, qrSettings.height)
+          // Don't add to currentY since QR code is positioned independently
         }
       } catch (error) {
         console.error('Error generating QR code:', error)
@@ -291,10 +307,14 @@ const LabelDesigner = () => {
       if (barcodeCanvas) {
         const targetWidth = labelConfig.barcodeSettings.width
         const targetHeight = labelConfig.barcodeSettings.height
-        const barcodeX = (width - targetWidth) / 2
         
-        ctx.drawImage(barcodeCanvas, barcodeX, currentY, targetWidth, targetHeight)
-        currentY += targetHeight + 10
+        // Calculate barcode position with custom offsets
+        const baseBarcodeX = (width - targetWidth) / 2
+        const barcodeX = baseBarcodeX + (labelConfig.barcodeSettings.x || 0)
+        const barcodeY = currentY + (labelConfig.barcodeSettings.y || 0)
+        
+        ctx.drawImage(barcodeCanvas, barcodeX, barcodeY, targetWidth, targetHeight)
+        currentY += targetHeight + 10 + (labelConfig.barcodeSettings.y || 0)
         
         // Draw barcode text if enabled
         if (labelConfig.barcodeSettings.showText) {
@@ -302,7 +322,10 @@ const LabelDesigner = () => {
           ctx.fillStyle = barcodeFont.color
           ctx.font = `${barcodeFont.weight} ${barcodeFont.size}px ${barcodeFont.family}`
           ctx.textAlign = 'center'
-          ctx.fillText(labelConfig.barcode, width / 2, currentY)
+          
+          // Position text with same X offset as barcode
+          const textX = (width / 2) + (labelConfig.barcodeSettings.x || 0)
+          ctx.fillText(labelConfig.barcode, textX, currentY)
           currentY += 20
         }
       }
@@ -333,32 +356,82 @@ const LabelDesigner = () => {
     if (!canvas) return
 
     try {
-      canvas.toBlob(async (blob) => {
+      // Create export canvas with proper DPI scaling
+      const exportCanvas = document.createElement('canvas')
+      const exportCtx = exportCanvas.getContext('2d')
+      
+      // Calculate export dimensions based on selected DPI
+      const scaleFactor = exportDPI / 96 // Assuming 96 DPI as base
+      const exportWidth = Math.round(labelConfig.width * scaleFactor)
+      const exportHeight = Math.round(labelConfig.height * scaleFactor)
+      
+      exportCanvas.width = exportWidth
+      exportCanvas.height = exportHeight
+      
+      // Scale the context to maintain quality
+      exportCtx.scale(scaleFactor, scaleFactor)
+      
+      // Apply rotation if specified
+      if (labelRotation !== 0) {
+        const centerX = labelConfig.width / 2
+        const centerY = labelConfig.height / 2
+        exportCtx.translate(centerX, centerY)
+        exportCtx.rotate((labelRotation * Math.PI) / 180)
+        exportCtx.translate(-centerX, -centerY)
+      }
+      
+      // Draw the original canvas content
+      exportCtx.drawImage(canvas, 0, 0)
+      
+      // Get the export format details
+      const format = exportFormats[selectedExportFormat]
+      const mimeType = format?.mimeType || 'image/png'
+      const extension = format?.extension || 'png'
+      
+      // Generate filename with proper naming
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
+      const fileName = `${labelConfig.title || 'label'}_${labelConfig.barcode || 'custom'}_${exportDPI}dpi_${timestamp}.${extension}`
+      
+      // Convert to blob with appropriate format
+      exportCanvas.toBlob(async (blob) => {
+        if (!blob) {
+          alert('Error creating export blob')
+          return
+        }
+
         const base64 = await new Promise(resolve => {
           const reader = new FileReader()
           reader.onload = () => resolve(reader.result)
           reader.readAsDataURL(blob)
         })
         
-        const fileName = `label_${labelConfig.barcode || 'custom'}_${Date.now()}.png`
-        
         try {
-          // For mock API, we'll create a download link
+          // Create download link
           const link = document.createElement('a')
           link.download = fileName
           link.href = base64
           document.body.appendChild(link)
           link.click()
           document.body.removeChild(link)
-          alert(`Label exported as ${fileName}`)
+          
+          // Show success message with export details
+          const exportDetails = `
+Format: ${format?.name || selectedExportFormat}
+Resolution: ${exportDPI} DPI
+Dimensions: ${Math.round((exportWidth / exportDPI) * 25.4)}×${Math.round((exportHeight / exportDPI) * 25.4)}mm
+Rotation: ${labelRotation}°
+File: ${fileName}`
+          
+          alert(`Label exported successfully!\n${exportDetails}`)
         } catch (error) {
           console.error('Export error:', error)
-          alert('Error exporting label')
+          alert('Error downloading exported label')
         }
-      }, 'image/png')
+      }, mimeType, format?.thermalOptimized ? 1.0 : 0.9) // Full quality for thermal formats
+      
     } catch (error) {
       console.error('Export error:', error)
-      alert('Error creating label')
+      alert('Error creating export: ' + error.message)
     }
   }
 
@@ -571,12 +644,20 @@ const LabelDesigner = () => {
             >
               🖨️ Print
             </button>
-            <button
-              onClick={exportLabel}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-            >
-              📥 Export PNG
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={exportLabel}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+              >
+                📥 Export {selectedExportFormat}
+              </button>
+              
+              {exportFormats[selectedExportFormat]?.thermalOptimized && (
+                <div className="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium flex items-center gap-1">
+                  🖨️ Thermal Ready
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -636,6 +717,120 @@ const LabelDesigner = () => {
               >
                 💾 Save as Template
               </button>
+            </div>
+          </div>
+
+          {/* Printer Configuration */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center">
+                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+                  <span className="text-blue-600">🖨️</span>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Printer Settings</h3>
+              </div>
+              <button
+                onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+              >
+                {showAdvancedSettings ? 'Simple' : 'Advanced'}
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Printer Model</label>
+                <select
+                  value={selectedPrinter}
+                  onChange={(e) => {
+                    setSelectedPrinter(e.target.value)
+                    const printer = printerConfigs[e.target.value]
+                    if (printer && printer.dpi) {
+                      setExportDPI(printer.dpi)
+                      if (printer.supportedFormats && printer.supportedFormats.length > 0) {
+                        setSelectedExportFormat(printer.supportedFormats[0])
+                      }
+                    }
+                  }}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                >
+                  {Object.entries(printerConfigs).map(([key, config]) => (
+                    <option key={key} value={key}>{config.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Paper Type</label>
+                <select
+                  value={selectedPaperType}
+                  onChange={(e) => setSelectedPaperType(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                >
+                  {Object.entries(paperTypes).map(([key, type]) => (
+                    <option key={key} value={key}>{type.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">{paperTypes[selectedPaperType]?.recommended}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Export Format</label>
+                <select
+                  value={selectedExportFormat}
+                  onChange={(e) => setSelectedExportFormat(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                >
+                  {Object.entries(exportFormats).map(([key, format]) => (
+                    <option key={key} value={key}>{format.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">{exportFormats[selectedExportFormat]?.description}</p>
+              </div>
+
+              {showAdvancedSettings && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Resolution (DPI)</label>
+                    <select
+                      value={exportDPI}
+                      onChange={(e) => setExportDPI(parseInt(e.target.value))}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    >
+                      {exportFormats[selectedExportFormat]?.dpiOptions?.map((dpi) => (
+                        <option key={dpi} value={dpi}>{dpi} DPI</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Rotation</label>
+                    <select
+                      value={labelRotation}
+                      onChange={(e) => setLabelRotation(parseInt(e.target.value))}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    >
+                      {printerConfigs[selectedPrinter]?.rotationAngles?.map((angle) => (
+                        <option key={angle} value={angle}>{angle}°</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                    <h4 className="text-sm font-medium text-blue-900 mb-2">Printer Specifications</h4>
+                    <div className="text-xs text-blue-700 space-y-1">
+                      <p><strong>Max Width:</strong> {printerConfigs[selectedPrinter]?.maxWidthMm}mm ({printerConfigs[selectedPrinter]?.maxWidthInches}")</p>
+                      <p><strong>Resolution:</strong> {printerConfigs[selectedPrinter]?.dpi} DPI</p>
+                      {printerConfigs[selectedPrinter]?.specifications?.printSpeed && (
+                        <p><strong>Speed:</strong> {printerConfigs[selectedPrinter].specifications.printSpeed}</p>
+                      )}
+                      {printerConfigs[selectedPrinter]?.supportedFormats && (
+                        <p><strong>Formats:</strong> {printerConfigs[selectedPrinter].supportedFormats.join(', ')}</p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -813,6 +1008,93 @@ const LabelDesigner = () => {
                   </label>
                 </div>
               </div>
+
+              {/* Barcode Position Controls */}
+              <div className="border-t border-gray-200 pt-4 mt-4">
+                <h4 className="text-sm font-medium text-gray-800 mb-3">Position</h4>
+                <div className="space-y-3">
+                  {/* Direction Buttons */}
+                  <div className="flex items-center justify-center">
+                    <div className="grid grid-cols-3 gap-1 w-32">
+                      {/* Top Row */}
+                      <div></div>
+                      <button
+                        onClick={() => updateBarcodeSettings('y', (labelConfig.barcodeSettings.y || 0) - 5)}
+                        className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                        title="Move Up"
+                      >
+                        ↑
+                      </button>
+                      <div></div>
+                      
+                      {/* Middle Row */}
+                      <button
+                        onClick={() => updateBarcodeSettings('x', (labelConfig.barcodeSettings.x || 0) - 5)}
+                        className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                        title="Move Left"
+                      >
+                        ←
+                      </button>
+                      <button
+                        onClick={() => {
+                          updateBarcodeSettings('x', 0)
+                          updateBarcodeSettings('y', 0)
+                        }}
+                        className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs font-medium transition-colors"
+                        title="Center"
+                      >
+                        ⌖
+                      </button>
+                      <button
+                        onClick={() => updateBarcodeSettings('x', (labelConfig.barcodeSettings.x || 0) + 5)}
+                        className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                        title="Move Right"
+                      >
+                        →
+                      </button>
+                      
+                      {/* Bottom Row */}
+                      <div></div>
+                      <button
+                        onClick={() => updateBarcodeSettings('y', (labelConfig.barcodeSettings.y || 0) + 5)}
+                        className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                        title="Move Down"
+                      >
+                        ↓
+                      </button>
+                      <div></div>
+                    </div>
+                  </div>
+                  
+                  {/* Fine Position Controls */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">X Offset</label>
+                      <input
+                        type="number"
+                        value={labelConfig.barcodeSettings.x || 0}
+                        onChange={(e) => updateBarcodeSettings('x', parseInt(e.target.value) || 0)}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-orange-500"
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Y Offset</label>
+                      <input
+                        type="number"
+                        value={labelConfig.barcodeSettings.y || 0}
+                        onChange={(e) => updateBarcodeSettings('y', parseInt(e.target.value) || 0)}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-orange-500"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="text-xs text-gray-500 text-center">
+                    Current: X:{labelConfig.barcodeSettings.x || 0}, Y:{labelConfig.barcodeSettings.y || 0}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -884,6 +1166,93 @@ const LabelDesigner = () => {
                         <option value="center">Center</option>
                         <option value="right">Right</option>
                       </select>
+                    </div>
+                  </div>
+
+                  {/* QR Code Position Controls */}
+                  <div className="border-t border-gray-200 pt-4 mt-4">
+                    <h4 className="text-sm font-medium text-gray-800 mb-3">Position</h4>
+                    <div className="space-y-3">
+                      {/* Direction Buttons */}
+                      <div className="flex items-center justify-center">
+                        <div className="grid grid-cols-3 gap-1 w-32">
+                          {/* Top Row */}
+                          <div></div>
+                          <button
+                            onClick={() => updateQrCodeSettings('y', (labelConfig.qrCodeSettings.y || 0) - 5)}
+                            className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                            title="Move Up"
+                          >
+                            ↑
+                          </button>
+                          <div></div>
+                          
+                          {/* Middle Row */}
+                          <button
+                            onClick={() => updateQrCodeSettings('x', (labelConfig.qrCodeSettings.x || 0) - 5)}
+                            className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                            title="Move Left"
+                          >
+                            ←
+                          </button>
+                          <button
+                            onClick={() => {
+                              updateQrCodeSettings('x', 0)
+                              updateQrCodeSettings('y', 0)
+                            }}
+                            className="px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded text-xs font-medium transition-colors"
+                            title="Center"
+                          >
+                            ⌖
+                          </button>
+                          <button
+                            onClick={() => updateQrCodeSettings('x', (labelConfig.qrCodeSettings.x || 0) + 5)}
+                            className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                            title="Move Right"
+                          >
+                            →
+                          </button>
+                          
+                          {/* Bottom Row */}
+                          <div></div>
+                          <button
+                            onClick={() => updateQrCodeSettings('y', (labelConfig.qrCodeSettings.y || 0) + 5)}
+                            className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium transition-colors"
+                            title="Move Down"
+                          >
+                            ↓
+                          </button>
+                          <div></div>
+                        </div>
+                      </div>
+                      
+                      {/* Fine Position Controls */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">X Offset</label>
+                          <input
+                            type="number"
+                            value={labelConfig.qrCodeSettings.x || 0}
+                            onChange={(e) => updateQrCodeSettings('x', parseInt(e.target.value) || 0)}
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-purple-500"
+                            placeholder="0"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Y Offset</label>
+                          <input
+                            type="number"
+                            value={labelConfig.qrCodeSettings.y || 0}
+                            onChange={(e) => updateQrCodeSettings('y', parseInt(e.target.value) || 0)}
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-purple-500"
+                            placeholder="0"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="text-xs text-gray-500 text-center">
+                        Current: X:{labelConfig.qrCodeSettings.x || 0}, Y:{labelConfig.qrCodeSettings.y || 0}
+                      </div>
                     </div>
                   </div>
                 </>
@@ -1146,31 +1515,101 @@ const LabelDesigner = () => {
             <div className="space-y-4">
               {/* Label Dimensions */}
               <div className="border border-gray-200 rounded-lg p-3">
-                <h4 className="text-sm font-medium text-gray-800 mb-3">Label Size</h4>
+                <h4 className="text-sm font-medium text-gray-800 mb-3">Precise Dimensions</h4>
+                
+                {/* DPI Information */}
+                <div className="mb-3 p-2 bg-blue-50 rounded text-xs text-blue-700">
+                  Current DPI: {exportDPI} | Max Width: {printerConfigs[selectedPrinter]?.maxWidthMm || 'N/A'}mm
+                </div>
+                
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Width (px)</label>
-                    <input
-                      type="number"
-                      value={labelConfig.width || 400}
-                      onChange={(e) => setLabelConfig(prev => ({ ...prev, width: parseInt(e.target.value) || 400 }))}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-red-500"
-                      min="200"
-                      max="800"
-                    />
+                  {/* Width Controls */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-medium text-gray-700">Width</label>
+                    <div className="space-y-1">
+                      <input
+                        type="number"
+                        value={Math.round((labelConfig.width / exportDPI) * 25.4 * 10) / 10} // Convert px to mm
+                        onChange={(e) => {
+                          const mmWidth = parseFloat(e.target.value) || 0
+                          const maxMm = printerConfigs[selectedPrinter]?.maxWidthMm || 200
+                          const validMm = Math.min(mmWidth, maxMm)
+                          const pxWidth = Math.round((validMm / 25.4) * exportDPI)
+                          setLabelConfig(prev => ({ ...prev, width: pxWidth }))
+                        }}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-blue-500"
+                        min="10"
+                        max={printerConfigs[selectedPrinter]?.maxWidthMm || 200}
+                        step="0.1"
+                        placeholder="mm"
+                      />
+                      <div className="text-xs text-gray-500">
+                        {Math.round((labelConfig.width / exportDPI) * 100) / 100}" | {labelConfig.width}px
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Height (px)</label>
-                    <input
-                      type="number"
-                      value={labelConfig.height || 300}
-                      onChange={(e) => setLabelConfig(prev => ({ ...prev, height: parseInt(e.target.value) || 300 }))}
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-red-500"
-                      min="150"
-                      max="600"
-                    />
+
+                  {/* Height Controls */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-medium text-gray-700">Height</label>
+                    <div className="space-y-1">
+                      <input
+                        type="number"
+                        value={Math.round((labelConfig.height / exportDPI) * 25.4 * 10) / 10} // Convert px to mm
+                        onChange={(e) => {
+                          const mmHeight = parseFloat(e.target.value) || 0
+                          const maxMm = printerConfigs[selectedPrinter]?.maxLengthMm || 500
+                          const validMm = Math.min(mmHeight, maxMm)
+                          const pxHeight = Math.round((validMm / 25.4) * exportDPI)
+                          setLabelConfig(prev => ({ ...prev, height: pxHeight }))
+                        }}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-blue-500"
+                        min="10"
+                        max={printerConfigs[selectedPrinter]?.maxLengthMm || 500}
+                        step="0.1"
+                        placeholder="mm"
+                      />
+                      <div className="text-xs text-gray-500">
+                        {Math.round((labelConfig.height / exportDPI) * 100) / 100}" | {labelConfig.height}px
+                      </div>
+                    </div>
                   </div>
                 </div>
+
+                {/* Quick Size Presets */}
+                <div className="mt-3">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Quick Sizes</label>
+                  <div className="grid grid-cols-2 gap-1">
+                    {Object.entries(paperSizes)
+                      .filter(([key, size]) => size.printer === selectedPrinter || !size.printer)
+                      .slice(0, 4)
+                      .map(([key, size]) => (
+                        <button
+                          key={key}
+                          onClick={() => {
+                            const widthPx = Math.round((size.widthMm / 25.4) * exportDPI)
+                            const heightPx = Math.round((size.heightMm / 25.4) * exportDPI)
+                            setLabelConfig(prev => ({ 
+                              ...prev, 
+                              width: widthPx || size.widthPx || 400, 
+                              height: heightPx || size.heightPx || 300 
+                            }))
+                            setSelectedPaperSize(key)
+                          }}
+                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded border text-gray-700 transition-colors"
+                        >
+                          {size.widthMm}×{size.heightMm}mm
+                        </button>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Validation Warnings */}
+                {(labelConfig.width / exportDPI) * 25.4 > (printerConfigs[selectedPrinter]?.maxWidthMm || 200) && (
+                  <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                    ⚠️ Width exceeds printer maximum ({printerConfigs[selectedPrinter]?.maxWidthMm}mm)
+                  </div>
+                )}
               </div>
 
               {/* Colors */}

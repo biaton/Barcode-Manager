@@ -113,6 +113,7 @@ export const labelTemplates = {
 
 // Printer paper sizes (in mm and inches)
 export const paperSizes = {
+  // Standard sizes
   '4x3': { 
     name: '4" x 3" (Standard)', 
     widthMm: 101.6, 
@@ -141,12 +142,126 @@ export const paperSizes = {
     widthPx: 300, 
     heightPx: 200 
   },
+  
+  // BLP-410 Thermal Printer Optimized Sizes (203 DPI, Max width: 108mm)
+  'blp410_100x60': {
+    name: 'BLP-410: 100x60mm (Standard Product)',
+    widthMm: 100,
+    heightMm: 60,
+    widthPx: 800, // 203 DPI: 100mm = ~800px
+    heightPx: 472, // 203 DPI: 60mm = ~472px
+    dpi: 203,
+    printer: 'BLP-410'
+  },
+  'blp410_80x40': {
+    name: 'BLP-410: 80x40mm (Compact)',
+    widthMm: 80,
+    heightMm: 40,
+    widthPx: 630,
+    heightPx: 315,
+    dpi: 203,
+    printer: 'BLP-410'
+  },
+  'blp410_50x25': {
+    name: 'BLP-410: 50x25mm (Small Items)',
+    widthMm: 50,
+    heightMm: 25,
+    widthPx: 394,
+    heightPx: 197,
+    dpi: 203,
+    printer: 'BLP-410'
+  },
+  'blp410_108x50': {
+    name: 'BLP-410: 108x50mm (Max Width)',
+    widthMm: 108,
+    heightMm: 50,
+    widthPx: 850,
+    heightPx: 394,
+    dpi: 203,
+    printer: 'BLP-410'
+  },
+  'blp410_continuous': {
+    name: 'BLP-410: Continuous (Variable Length)',
+    widthMm: 100,
+    heightMm: 0, // Variable
+    widthPx: 800,
+    heightPx: 0, // Will be calculated
+    dpi: 203,
+    printer: 'BLP-410',
+    continuous: true
+  },
+  
   custom: { 
     name: 'Custom Size', 
     widthMm: 0, 
     heightMm: 0,
     widthPx: 400, 
     heightPx: 300 
+  }
+}
+
+// Printer configurations
+export const printerConfigs = {
+  'BLP-410': {
+    name: 'BLP-410 Thermal Printer',
+    type: 'thermal',
+    dpi: 203,
+    maxWidthMm: 108,
+    maxWidthInches: 4.25,
+    maxLengthMm: 2286,
+    maxLengthInches: 90,
+    minWidthMm: 20,
+    minLengthMm: 10,
+    supportedFormats: ['BMP', 'PCX'],
+    rotationAngles: [0, 90, 180, 270],
+    paperTypes: ['continuous', 'gap', 'folding', 'punched'],
+    ribbonTypes: ['thermal_transfer', 'thermal_direct'],
+    interface: ['USB 2.0', 'Parallel', 'RS-232'],
+    specifications: {
+      printSpeed: '2-6 inches/sec',
+      headLifeCycle: '50 km',
+      resolution: '203 dots/inch (8dots/mm)',
+      powerInput: '+24VDC/2.0A',
+      operatingTemp: '5°C ~ 45°C',
+      operatingHumidity: '25% ~ 85% RH'
+    }
+  },
+  'generic': {
+    name: 'Generic Printer',
+    type: 'generic',
+    dpi: 300,
+    maxWidthMm: 210,
+    maxLengthMm: 297,
+    supportedFormats: ['PNG', 'PDF', 'JPG'],
+    rotationAngles: [0, 90, 180, 270]
+  }
+}
+
+// Paper type configurations for thermal printers
+export const paperTypes = {
+  continuous: {
+    name: 'Continuous Paper',
+    description: 'Roll paper without gaps or perforations',
+    gapSpacing: 0,
+    recommended: 'For variable length labels'
+  },
+  gap: {
+    name: 'Gap Paper',
+    description: 'Labels with gaps between them',
+    gapSpacing: 2, // minimum 2mm
+    recommended: 'Most common for product labels'
+  },
+  folding: {
+    name: 'Paper Folding',
+    description: 'Fanfold paper with perforations',
+    gapSpacing: 0,
+    recommended: 'For high-volume printing'
+  },
+  punched: {
+    name: 'Punched Paper',
+    description: 'Paper with holes for tractor feed',
+    gapSpacing: 0,
+    recommended: 'For industrial applications'
   }
 }
 
@@ -158,4 +273,38 @@ export const industryBarcodes = {
   food: ['ean13', 'upc-a', 'code128', 'gs1-128'],
   automotive: ['code39', 'code128', 'datamatrix'],
   electronics: ['qrcode', 'datamatrix', 'code128']
+}
+
+// Export format configurations
+export const exportFormats = {
+  PNG: {
+    name: 'PNG Image',
+    extension: 'png',
+    mimeType: 'image/png',
+    description: 'High quality raster image',
+    dpiOptions: [150, 203, 300, 600]
+  },
+  BMP: {
+    name: 'BMP Image (BLP-410 Compatible)',
+    extension: 'bmp',
+    mimeType: 'image/bmp',
+    description: 'Windows Bitmap - Thermal printer compatible',
+    dpiOptions: [203],
+    thermalOptimized: true
+  },
+  PCX: {
+    name: 'PCX Image (BLP-410 Compatible)',
+    extension: 'pcx',
+    mimeType: 'image/pcx',
+    description: 'PC Paintbrush - Thermal printer compatible',
+    dpiOptions: [203],
+    thermalOptimized: true
+  },
+  PDF: {
+    name: 'PDF Document',
+    extension: 'pdf',
+    mimeType: 'application/pdf',
+    description: 'Scalable vector format',
+    dpiOptions: [150, 300, 600]
+  }
 }
