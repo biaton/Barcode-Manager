@@ -57,7 +57,13 @@ const LabelDesigner = () => {
       width: 80,
       height: 80,
       position: 'left'
-    }
+    },
+    isSequenceEnabled: false,
+    sequenceCurrent: 1,
+    sequenceTotal: 10,
+    sequencePrefix: 'Box ',
+    sequenceX: 0, // Idagdag ito para sa Left/Right
+    sequenceY: 0  // Idagdag ito para sa Up/Down
   })
 
   const [selectedTemplate, setSelectedTemplate] = useState('standard')
@@ -74,6 +80,11 @@ const LabelDesigner = () => {
   const [templateName, setTemplateName] = useState('')
   const [templateDescription, setTemplateDescription] = useState('')
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+  const [isPrinting, setIsPrinting] = useState(false)
+  const [auditLogs, setAuditLogs] = useState([])
+  const [showPrintModal, setShowPrintModal] = useState(false)
+  const [previewImages, setPreviewImages] = useState([]) // Ginawa nating Array
+  const [isPreparingPreview, setIsPreparingPreview] = useState(false) // Bagong loading state
 
   // Helper functions
   const updateFontSetting = (fontType, property, value) => {
@@ -201,6 +212,20 @@ const LabelDesigner = () => {
       }
       ctx.strokeRect(0, 0, width, height)
       ctx.setLineDash([])
+    }
+
+    if (labelConfig.isSequenceEnabled) {
+      const seqText = `${labelConfig.sequencePrefix || ''}${labelConfig.sequenceCurrent || 1}/${labelConfig.sequenceTotal || 10}`
+      ctx.fillStyle = '#000000' 
+      ctx.font = `bold 14px Arial` 
+      ctx.textAlign = 'right'
+      
+      // I-calculate ang final position kasama ang custom X at Y movements
+      const seqX = (width - styleSettings.padding) + (labelConfig.sequenceX || 0)
+      const seqY = (styleSettings.padding + 12) + (labelConfig.sequenceY || 0)
+      
+      // I-draw gamit ang bagong coordinates
+      ctx.fillText(seqText, seqX, seqY)
     }
 
     let currentY = styleSettings.padding + 10
@@ -553,39 +578,86 @@ File: ${fileName}`
     }
   }
 
-  const printLabel = () => {
+  const handlePrintClick = async () => {
     const canvas = canvasRef.current
     if (!canvas) return
 
+    setShowPrintModal(true)
+
+    // Kung hindi naka-sequence, isang papel lang
+    if (!labelConfig.isSequenceEnabled) {
+      setPreviewImages([canvas.toDataURL('image/png')])
+      return;
+    }
+
+    // Kung naka-sequence, i-loop at i-generate lahat para sa preview
+    setIsPreparingPreview(true)
+    setPreviewImages([]) // Linisin ang lumang preview
+    
+    let currentSeq = labelConfig.sequenceCurrent || 1
+    const totalSeq = labelConfig.sequenceTotal || 10
+    const originalSeq = currentSeq 
+    const images = []
+
+    for (let i = currentSeq; i <= totalSeq; i++) {
+      await new Promise(resolve => {
+        setLabelConfig(prev => ({ ...prev, sequenceCurrent: i }))
+        // Delay para gumuhit muna ang canvas bago kunin ang picture
+        setTimeout(() => {
+          const currentCanvas = canvasRef.current
+          if (currentCanvas) {
+            images.push(currentCanvas.toDataURL('image/png'))
+          }
+          resolve()
+        }, 350) 
+      })
+    }
+
+    // Ibalik sa original sequence number yung input box
+    setLabelConfig(prev => ({ ...prev, sequenceCurrent: originalSeq }))
+    setPreviewImages(images)
+    setIsPreparingPreview(false)
+  }
+
+  // 2. Pag-click ng Confirm Print: I-print at ipakita ang Audit Trail
+  const executePrint = async () => {
+    setIsPrinting(true)
+    setAuditLogs([])
+
+    const addLog = (message) => {
+      setAuditLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${message}`])
+    }
+
     try {
-      // Create a new window for printing
-      const printWindow = window.open('', '_blank')
-      
-      // Convert canvas to image
-      const dataUrl = canvas.toDataURL('image/png')
-      
-      // Create print content
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Print Label</title>
-            <style>
-              body { margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-              img { max-width: 100%; height: auto; border: 1px solid #ccc; }
-              @media print { body { padding: 0; } }
-            </style>
-          </head>
-          <body>
-            <img src="${dataUrl}" alt="Label" />
-            <script>window.onload = function() { window.print(); window.close(); }</script>
-          </body>
-        </html>
-      `)
-      
-      printWindow.document.close()
+      addLog(`Starting Print Job: ${previewImages.length} labels queued.`)
+      addLog('Connecting to internal print engine...')
+
+      // Dahil na-generate na natin lahat kanina sa preview, 
+      // gagawa na lang tayo ng pseudo-delay sa audit trail para makita ng user ang progress
+      for (let i = 0; i < previewImages.length; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200)) // Mabilis na delay per log
+        addLog(`Sending label ${i + 1} of ${previewImages.length} to spooler...`)
+      }
+
+      addLog('Transmitting data to printer...')
+
+      if (window.api && window.api.printLabels) {
+        // Ipadala ang buong array ng images sa Electron
+        await window.api.printLabels(previewImages)
+        addLog('✅ Batch print job completed successfully.')
+      } else {
+        addLog('⚠️ IPC "printLabels" not found. Simulated only.')
+      }
+
+      setTimeout(() => {
+        setIsPrinting(false)
+        setShowPrintModal(false) // Isara ang preview pagkatapos mag-print
+      }, 3500)
+
     } catch (error) {
       console.error('Print error:', error)
-      alert('Error printing label')
+      addLog(`❌ Error: ${error.message}`)
+      setTimeout(() => setIsPrinting(false), 5000)
     }
   }
 
@@ -639,14 +711,14 @@ File: ${fileName}`
           </div>
           <div className="flex gap-3">
             <button
-              onClick={printLabel}
+              onClick={handlePrintClick}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
             >
               🖨️ Print
             </button>
             <div className="flex gap-2">
               <button
-                onClick={exportLabel}
+                onClick={handlePrintClick}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
               >
                 📥 Export {selectedExportFormat}
@@ -934,6 +1006,104 @@ File: ${fileName}`
                   ))}
                 </div>
               </div>
+
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="block text-sm font-medium text-gray-700">Batch / Sequence Printing</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="enableSequence"
+                      checked={labelConfig.isSequenceEnabled || false}
+                      onChange={(e) => setLabelConfig(prev => ({ ...prev, isSequenceEnabled: e.target.checked }))}
+                      className="rounded text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="enableSequence" className="text-xs font-medium text-gray-600">Enable (e.g. 1/10)</label>
+                  </div>
+                </div>
+
+                {labelConfig.isSequenceEnabled && (
+                  <div className="grid grid-cols-2 gap-3 p-4 bg-blue-50 rounded-lg border border-blue-100">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Start / Current</label>
+                      <input
+                        type="number"
+                        value={labelConfig.sequenceCurrent || 1}
+                        onChange={(e) => setLabelConfig(prev => ({ ...prev, sequenceCurrent: parseInt(e.target.value) || 1 }))}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 text-sm"
+                        min="1"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Total Limit</label>
+                      <input
+                        type="number"
+                        value={labelConfig.sequenceTotal || 10}
+                        onChange={(e) => setLabelConfig(prev => ({ ...prev, sequenceTotal: parseInt(e.target.value) || 10 }))}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 text-sm"
+                        min="1"
+                      />
+                    </div>
+                    <div className="col-span-2 flex items-center gap-2 mt-1">
+                      <label className="text-xs font-medium text-gray-700">Prefix Text:</label>
+                      <input
+                        type="text"
+                        value={labelConfig.sequencePrefix || 'Box '}
+                        onChange={(e) => setLabelConfig(prev => ({ ...prev, sequencePrefix: e.target.value }))}
+                        className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-blue-500"
+                        placeholder="e.g. Box, Item, Part"
+                      />
+                    </div>
+                    <div className="col-span-2 border-t border-blue-200 pt-3 mt-2">
+                      <h4 className="text-xs font-medium text-gray-800 mb-2">Move Position</h4>
+                      <div className="grid grid-cols-2 gap-4 items-center">
+                        {/* Direction Arrow Buttons */}
+                        <div className="flex justify-center">
+                          <div className="grid grid-cols-3 gap-1 w-24">
+                            <div></div>
+                            <button onClick={() => setLabelConfig(prev => ({ ...prev, sequenceY: (prev.sequenceY || 0) - 5 }))} className="px-1 py-1 bg-white hover:bg-gray-100 rounded text-xs border border-blue-200" title="Up">↑</button>
+                            <div></div>
+                            
+                            <button onClick={() => setLabelConfig(prev => ({ ...prev, sequenceX: (prev.sequenceX || 0) - 5 }))} className="px-1 py-1 bg-white hover:bg-gray-100 rounded text-xs border border-blue-200" title="Left">←</button>
+                            <button onClick={() => setLabelConfig(prev => ({ ...prev, sequenceX: 0, sequenceY: 0 }))} className="px-1 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[10px] font-bold border border-blue-200" title="Reset">⌖</button>
+                            <button onClick={() => setLabelConfig(prev => ({ ...prev, sequenceX: (prev.sequenceX || 0) + 5 }))} className="px-1 py-1 bg-white hover:bg-gray-100 rounded text-xs border border-blue-200" title="Right">→</button>
+                            
+                            <div></div>
+                            <button onClick={() => setLabelConfig(prev => ({ ...prev, sequenceY: (prev.sequenceY || 0) + 5 }))} className="px-1 py-1 bg-white hover:bg-gray-100 rounded text-xs border border-blue-200" title="Down">↓</button>
+                            <div></div>
+                          </div>
+                        </div>
+
+                        {/* Fine Offset Inputs */}
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <label className="text-[10px] font-medium text-gray-700 w-8">X Axis</label>
+                            <input
+                              type="number"
+                              value={labelConfig.sequenceX || 0}
+                              onChange={(e) => setLabelConfig(prev => ({ ...prev, sequenceX: parseInt(e.target.value) || 0 }))}
+                              className="w-full px-2 py-1 border border-blue-200 rounded text-xs focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-[10px] font-medium text-gray-700 w-8">Y Axis</label>
+                            <input
+                              type="number"
+                              value={labelConfig.sequenceY || 0}
+                              onChange={(e) => setLabelConfig(prev => ({ ...prev, sequenceY: parseInt(e.target.value) || 0 }))}
+                              className="w-full px-2 py-1 border border-blue-200 rounded text-xs focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="col-span-2 text-xs font-semibold text-blue-800 bg-blue-100 p-2 rounded text-center mt-2">
+                      Preview: {labelConfig.sequencePrefix || ''}{labelConfig.sequenceCurrent || 1}/{labelConfig.sequenceTotal || 10}
+                    </div>
+                  </div>
+                )}
+              </div>
+
             </div>
           </div>
 
@@ -1761,7 +1931,7 @@ File: ${fileName}`
                 <div className="absolute -top-4 left-0 right-0 h-3 bg-gray-200 rounded-t flex items-center justify-center text-xs text-gray-500">
                   {labelConfig.width}px
                 </div>
-                <div className="absolute -left-4 top-0 bottom-0 w-3 bg-gray-200 rounded-l flex items-center justify-center text-xs text-gray-500 transform -rotate-90">
+                <div className="absolute -left-4 top-0 bottom-0 w-3 bg-gray-200 rounded-l flex items-center justify-center text-xs text-gray-500 transform -rotate-40">
                   {labelConfig.height}px
                 </div>
               </div>
@@ -1818,7 +1988,7 @@ File: ${fileName}`
 
               <div className="flex gap-2">
                 <button
-                  onClick={printLabel}
+                  onClick={handlePrintClick}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
                 >
                   🖨️ Print
@@ -1877,6 +2047,103 @@ File: ${fileName}`
                   Save Template
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 1. PRINT PREVIEW MODAL */}
+      {showPrintModal && (
+        <div className="fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center z-40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-[850px] max-w-[95vw] flex flex-col">
+            <div className="flex justify-between items-center mb-4 border-b pb-3">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                🖨️ Print Preview
+              </h2>
+              {/* Wag payagang i-close habang nagge-generate o nagpi-print */}
+              {(!isPrinting && !isPreparingPreview) && (
+                <button onClick={() => setShowPrintModal(false)} className="text-gray-400 hover:text-red-500 font-bold text-lg">✕</button>
+              )}
+            </div>
+            
+            <div className="flex gap-6 h-[450px]">
+              {/* KALIWA: Ang Scrollable Paper Preview */}
+              <div className="flex-1 bg-gray-200 rounded-lg p-4 border-2 border-dashed border-gray-300 overflow-y-auto relative flex flex-col items-center gap-6 shadow-inner">
+                {isPreparingPreview ? (
+                  <div className="flex flex-col items-center justify-center h-full text-blue-600">
+                    <span className="text-5xl animate-spin mb-4">⚙️</span>
+                    <span className="font-bold text-lg animate-pulse">Generating All Labels...</span>
+                    <span className="text-sm text-gray-500 mt-2">Please wait while we render your batch.</span>
+                  </div>
+                ) : (
+                  previewImages.map((imgSrc, idx) => (
+                    <div key={idx} className="relative group w-full flex justify-center">
+                      <div className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded shadow-sm">
+                        Page {idx + 1}
+                      </div>
+                      <img 
+                        src={imgSrc} 
+                        alt={`Label Page ${idx + 1}`} 
+                        className="max-w-[90%] object-contain shadow-md border bg-white transition-transform group-hover:scale-[1.02]"
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+              
+              {/* KANAN: Print Details */}
+              <div className="w-64 flex flex-col space-y-4">
+                <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-900 border border-blue-100 shadow-sm">
+                  <p className="mb-3"><strong className="text-blue-700 block text-xs uppercase tracking-wider">Selected Printer</strong><span className="text-base font-medium">{selectedPrinter}</span></p>
+                  <p className="mb-3"><strong className="text-blue-700 block text-xs uppercase tracking-wider">Dimensions</strong><span>{labelConfig.width} × {labelConfig.height} px</span></p>
+                  <p><strong className="text-blue-700 block text-xs uppercase tracking-wider">Total Copies</strong>
+                    <span className="text-2xl font-bold text-blue-600">
+                      {previewImages.length || (labelConfig.isSequenceEnabled ? (labelConfig.sequenceTotal - labelConfig.sequenceCurrent + 1) : 1)}
+                    </span>
+                  </p>
+                </div>
+                
+                <div className="flex-1"></div>
+                
+                <button 
+                  onClick={executePrint}
+                  disabled={isPrinting || isPreparingPreview}
+                  className={`w-full py-4 rounded-xl font-bold text-white transition-all shadow-md text-lg flex justify-center items-center gap-2
+                    ${(isPrinting || isPreparingPreview) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-lg hover:-translate-y-0.5'}
+                  `}
+                >
+                  {isPrinting ? (
+                    <><span className="animate-spin">⚙️</span> Printing...</>
+                  ) : (
+                    <>🖨️ Confirm Print</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. AUDIT TRAIL MODAL (Nasa Bottom-Right) */}
+      {isPrinting && (
+        <div className="fixed bottom-6 right-6 w-[400px] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden z-50 flex flex-col animate-fade-in-up">
+          <div className="bg-gray-800 px-4 py-3 border-b border-gray-700 flex justify-between items-center shadow-sm">
+            <span className="text-white font-bold text-sm flex items-center gap-2">
+              <span className="animate-spin text-blue-400">⚙️</span> Print Audit Trail
+            </span>
+          </div>
+          
+          <div className="p-4 h-64 overflow-y-auto font-mono text-xs leading-relaxed flex flex-col justify-end">
+            <div className="space-y-1.5 mt-auto">
+              {auditLogs.map((log, index) => (
+                <div key={index} className={`
+                  border-b border-gray-800 pb-1
+                  ${log.includes('✅') ? 'text-green-400' : 
+                    log.includes('❌') ? 'text-red-400' : 
+                    log.includes('⚠️') ? 'text-yellow-400' : 'text-blue-300'}
+                `}>
+                  {log}
+                </div>
+              ))}
             </div>
           </div>
         </div>

@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('api', {
   
   // Barcode operations
   listBarcodeTypes: () => ipcRenderer.invoke('list-barcode-types'),
+
+  // Print operations
+  printLabels: (imagesArray) => ipcRenderer.invoke('print-labels', imagesArray),
   
   // Database management
   resetDatabase: () => ipcRenderer.invoke('db-reset'),
